@@ -19,9 +19,10 @@ DBS = {
     'bit.ly': lmdb.open('./db/bit.ly', max_dbs=0, map_size=2 ** 40),
 }
 
+
 def get_from_db(shortener, shortcode):
     database = DBS.get(shortener, None)
-    if database == None:
+    if database is None:
         return None
 
     converter = BaseConverter(ALPHABETS[shortener])
@@ -29,16 +30,19 @@ def get_from_db(shortener, shortcode):
     with database.begin(write=False) as txn:
         key = converter.str_to_bytes(shortcode)
         result = txn.get(key)
-        if result == None:
+        if result is None:
             return None
 
         return result.decode()
 
+
 app = Flask(__name__)
+
 
 @app.route('/')
 def index():
     return "301 remover is running!"
+
 
 @app.route('/api/bulk_resolve', methods=['POST'])
 def bulk_resolve():
