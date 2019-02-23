@@ -2,6 +2,10 @@ from flask import Flask, request, jsonify
 import lmdb
 from three_oh_one.base_converter.base_converter import BaseConverter
 
+from three_oh_one.services.bitly import BitlyService
+
+from three_oh_one.client.params import PARAMS
+
 FULL_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_'
 FULL_ALPHABET_NO_UNDERSCORE = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_'
 ALPHANUMERIC = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -16,7 +20,11 @@ ALPHABETS = {
 }
 
 DBS = {
-    'bit.ly': lmdb.open('./db/bit.ly', max_dbs=0, map_size=2 ** 40),
+    'bit.ly': lmdb.open('/data/db/bit.ly', max_dbs=0, map_size=2 ** 40),
+}
+
+RESOLVERS = {
+    'bit.ly': BitlyService(PARAMS['bitly'])
 }
 
 
@@ -36,6 +44,32 @@ def get_from_db(shortener, shortcode):
         return result.decode()
 
 
+def store_in_db(shortener, shortcode, url):
+    env = DBS[shortener]
+    converter = BaseConverter(ALPHABETS[shortener])
+    with env.begin(write=True) as txn:
+        key = converter.str_to_bytes(shortcode)
+        assert shortcode == converter.bytes_to_str(key)
+        txn.put(key, url.encode())
+
+
+def get_from_real_service(shortener, shortcode):
+    print('getting from real service', shortener, shortcode)
+    resolver = RESOLVERS.get(shortener, None)
+    if resolver is None:
+        return None
+
+    response = resolver.scrape_one(shortcode)
+    print('response', response)
+    if response is None:
+        return None
+
+    url = response['url']
+    shortcode = response['shortcode']
+    store_in_db(shortener, shortcode, url)
+
+    return url
+
 app = Flask(__name__)
 
 
@@ -51,4 +85,16 @@ def bulk_resolve():
         [shortener, shortcode] = content[i].split('/')
         content[i] = get_from_db(shortener, shortcode)
 
+        if content[i] is not None:
+            # don't bother trying the real service if we've already got it
+            continue
+
+        content[i] = get_from_real_service(shortener, shortcode)
+
+
+
     return jsonify(content)
+
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0')
